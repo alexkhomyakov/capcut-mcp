@@ -187,7 +187,13 @@ export class CapCutDraft {
   // ---------- add media (video/image/audio) ----------
   _addMedia(kind, file, opts) {
     if (!fs.existsSync(file)) throw new Error(`file not found: ${file}`);
-    const type = kind === 'audio' ? 'audio' : (kind === 'image' ? 'photo' : 'video');
+    // LOCAL PATCH (not upstream). An imported audio file is 'extract_music'.
+    //
+    // Read out of a project CapCut made itself, after 'audio' -- a value
+    // CapCut never writes -- turned out to be why it would not DRAW the clip.
+    // It played the file perfectly and rendered an empty row, so the whole
+    // programme track could be muted but never selected, split or trimmed.
+    const type = kind === 'audio' ? 'extract_music' : (kind === 'image' ? 'photo' : 'video');
     const tplType = kind === 'image' ? (this.templates().image ? 'image' : 'video') : kind;
     // LOCAL PATCH (not upstream). AUDIO FALLS BACK TO THE LIBRARY-MUSIC
     // TEMPLATE, NEVER TO VIDEO.
@@ -212,15 +218,22 @@ export class CapCutDraft {
     const mat = clone(tpl.mat); mat.id = uid(); mat.path = file.replace(/\\/g, '/'); mat.material_name = path.basename(file); mat.type = type;
     if (kind !== 'audio') { const { w, h } = probeWH(file); mat.width = w; mat.height = h; }
     if (kind === 'audio') {
-      // An audio material is labelled by `name`; `material_name` is a video
-      // field and is set above only so both shapes carry the basename.
-      mat.name = path.basename(file);
-      // Cloned from a licensed library track, so its provenance has to go or
-      // CapCut believes this is a song it knows. wave_points is the waveform
-      // cache, which CapCut fills in itself once it can see the clip.
-      ['music_id', 'resource_id', 'category_id', 'category_name', 'music_source',
-       'pgc_id', 'pgc_name', 'third_resource_id', 'search_id', 'query',
+      // Every value below was read from a project CapCut wrote itself, after
+      // three rounds of inferring them. An imported file differs from the
+      // licensed library track this template is cloned from in exactly these
+      // fields, and the library's provenance has to go or CapCut believes
+      // this is a song it knows.
+      mat.name = path.basename(file);      // audio is labelled `name`
+      delete mat.material_name;            // ...and carries no video-side label
+      mat.category_name = 'local';
+      mat.check_flag = 1;
+      mat.copyright_limit_type = 'none';
+      mat.music_id = crypto.randomUUID();  // lowercase, unlike segment ids
+      ['resource_id', 'category_id', 'music_source', 'pgc_id', 'pgc_name',
+       'third_resource_id', 'search_id', 'query', 'source_from', 'effect_id',
+       'formula_id', 'request_id', 'video_id', 'text_id',
       ].forEach(k => { if (k in mat) mat[k] = ''; });
+      // The waveform cache, which CapCut fills in once it can see the clip.
       if ('wave_points' in mat) mat.wave_points = [];
     }
     // LOCAL PATCH (not upstream). This was:
