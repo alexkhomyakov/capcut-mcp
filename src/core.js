@@ -255,7 +255,25 @@ export class CapCutDraft {
     ['local_material_id', 'origin_material_id', 'local_id', 'request_id', 'aigc_history_id', 'aigc_item_id'].forEach(k => { if (k in mat) mat[k] = ''; });
     const matKey = kind === 'audio' ? 'audios' : (kind === 'image' ? 'videos' : 'videos'); // CapCut stores images in videos[]
     this._mats(matKey).push(mat);
-    const refs = tpl.refs.map(({ k, m }) => { const c = clone(m); c.id = uid(); this._mats(k).push(c); return c.id; });
+    // LOCAL PATCH (not upstream). A CLONED FADE IS NEVER AN INTENDED FADE.
+    //
+    // The companion materials come from whatever clip the template was built
+    // around, and this template's was a library music track carrying a 9.9s
+    // fade in and a 10s fade out. Every audio segment inherited them: 38 of
+    // them on one episode, each swelling the programme audio in over ten
+    // seconds, and each needing to be corrected by hand.
+    //
+    // Same shape as the `volume: 10` this pipeline already learned from, and
+    // the same rule -- nothing in a draft may carry a value that was
+    // inherited rather than chosen. Pass fadeInUs/fadeOutUs to ask for one.
+    const refs = tpl.refs.map(({ k, m }) => {
+      const c = clone(m); c.id = uid();
+      if (k === 'audio_fades') {
+        c.fade_in_duration = opts.fadeInUs || 0;
+        c.fade_out_duration = opts.fadeOutUs || 0;
+      }
+      this._mats(k).push(c); return c.id;
+    });
     const seg = clone(tpl.seg); seg.id = uid(); seg.material_id = mat.id; seg.extra_material_refs = refs;
     const at = opts.atUs || 0;
     seg.target_timerange = { start: at, duration: dur };
@@ -288,7 +306,25 @@ export class CapCutDraft {
       mat.content = JSON.stringify(content);
     } catch { mat.content = JSON.stringify({ text, styles: [{ range: [0, text.length], size: opts.fontSize || 15, fill: { content: { solid: { color: hexToRgb(opts.color || '#ffffff') } } } }] }); }
     this._mats('texts').push(mat);
-    const refs = tpl.refs.map(({ k, m }) => { const c = clone(m); c.id = uid(); this._mats(k).push(c); return c.id; });
+    // LOCAL PATCH (not upstream). A CLONED FADE IS NEVER AN INTENDED FADE.
+    //
+    // The companion materials come from whatever clip the template was built
+    // around, and this template's was a library music track carrying a 9.9s
+    // fade in and a 10s fade out. Every audio segment inherited them: 38 of
+    // them on one episode, each swelling the programme audio in over ten
+    // seconds, and each needing to be corrected by hand.
+    //
+    // Same shape as the `volume: 10` this pipeline already learned from, and
+    // the same rule -- nothing in a draft may carry a value that was
+    // inherited rather than chosen. Pass fadeInUs/fadeOutUs to ask for one.
+    const refs = tpl.refs.map(({ k, m }) => {
+      const c = clone(m); c.id = uid();
+      if (k === 'audio_fades') {
+        c.fade_in_duration = opts.fadeInUs || 0;
+        c.fade_out_duration = opts.fadeOutUs || 0;
+      }
+      this._mats(k).push(c); return c.id;
+    });
     const seg = clone(tpl.seg); seg.id = uid(); seg.material_id = mat.id; seg.extra_material_refs = refs;
     const at = opts.atUs || 0, dur = opts.durUs || 3 * US;
     seg.target_timerange = { start: at, duration: dur };
