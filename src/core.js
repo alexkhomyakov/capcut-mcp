@@ -129,10 +129,21 @@ export class CapCutDraft {
     // fill any missing segment type from the template draft
     if (!t.video || !t.text || !t.audio) {
       try { const base = JSON.parse(fs.readFileSync(contentPath(path.join(DRAFTS_DIR, TEMPLATE_DRAFT)), 'utf8')); const bt = harvest(base);
-        for (const k of ['video', 'audio', 'text', 'image']) if (!t[k] && bt[k]) t[k] = bt[k];
+        // LOCAL PATCH (not upstream): 'music' is in this list now.
+        //
+        // harvest() keys a material by its own `type`, and CapCut types a
+        // track from its library "music" and an imported file "audio". A
+        // template draft's only sound is usually a library track, so bt.audio
+        // was undefined, nothing was backfilled, and _addMedia's lookup fell
+        // through to the VIDEO template -- building every audio clip with
+        // crop, matting and beauty_face_auto_preset instead of name and
+        // wave_points. CapCut played those and could not draw them.
+        for (const k of ['video', 'audio', 'text', 'image', 'music']) if (!t[k] && bt[k]) t[k] = bt[k];
         for (const k of Object.keys(bt.tracks)) if (!t.tracks[k]) t.tracks[k] = bt.tracks[k];
       } catch {}
     }
+    // Either kind is audio-shaped, and the difference is where it came from.
+    if (!t.audio && t.music) t.audio = t.music;
     this._tpl = t; return t;
   }
   _mats(key) { this.content.materials[key] = this.content.materials[key] || []; return this.content.materials[key]; }
@@ -178,11 +189,40 @@ export class CapCutDraft {
     if (!fs.existsSync(file)) throw new Error(`file not found: ${file}`);
     const type = kind === 'audio' ? 'audio' : (kind === 'image' ? 'photo' : 'video');
     const tplType = kind === 'image' ? (this.templates().image ? 'image' : 'video') : kind;
-    const tpl = this.templates()[tplType] || this.templates().video;
+    // LOCAL PATCH (not upstream). AUDIO FALLS BACK TO THE LIBRARY-MUSIC
+    // TEMPLATE, NEVER TO VIDEO.
+    //
+    // harvest() keys a material by its own `type`, and CapCut calls a track
+    // from its library "music". So templates().audio is undefined on any
+    // template draft whose only sound is a library track -- which was ours --
+    // and every audio clip in every episode was built from the VIDEO
+    // material: material_name where audio wants name, crop and matting and
+    // beauty_face_auto_preset where audio wants wave_points and music_id.
+    //
+    // CapCut resolved the path and played it perfectly, and could not draw or
+    // select the clip. That presents as a track holding the entire programme
+    // audio -- muting it silences the episode -- which shows as an empty row
+    // that cannot be trimmed, split or touched. Falling back to video was the
+    // one branch nobody had a reason to look at, because sound came out.
+    const tpl = this.templates()[tplType]
+      || (kind === 'audio' ? this.templates().music : null)
+      || this.templates().video;
     if (!tpl) throw new Error(`no ${kind} template available`);
     const dur = opts.durUs != null ? opts.durUs : probeDur(file);
     const mat = clone(tpl.mat); mat.id = uid(); mat.path = file.replace(/\\/g, '/'); mat.material_name = path.basename(file); mat.type = type;
     if (kind !== 'audio') { const { w, h } = probeWH(file); mat.width = w; mat.height = h; }
+    if (kind === 'audio') {
+      // An audio material is labelled by `name`; `material_name` is a video
+      // field and is set above only so both shapes carry the basename.
+      mat.name = path.basename(file);
+      // Cloned from a licensed library track, so its provenance has to go or
+      // CapCut believes this is a song it knows. wave_points is the waveform
+      // cache, which CapCut fills in itself once it can see the clip.
+      ['music_id', 'resource_id', 'category_id', 'category_name', 'music_source',
+       'pgc_id', 'pgc_name', 'third_resource_id', 'search_id', 'query',
+      ].forEach(k => { if (k in mat) mat[k] = ''; });
+      if ('wave_points' in mat) mat.wave_points = [];
+    }
     // LOCAL PATCH (not upstream). This was:
     //   kind === 'audio' ? probeDur(file) : (mat.duration || probeDur(file))
     // The video branch keeps the duration of whatever material the TEMPLATE
